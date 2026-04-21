@@ -83,6 +83,23 @@ def _short_tool_id() -> str:
     return "".join(secrets.choice(_ALNUM) for _ in range(9))
 
 
+def _deep_merge_into(target: dict[str, Any], source: dict[str, Any]) -> None:
+    """Recursively merge ``source`` into ``target`` in-place.
+
+    Nested dicts are merged; other values overwrite. Used to layer user-supplied
+    ``extra_body`` on top of provider-injected defaults without clobbering
+    sibling keys (e.g. ``chat_template_kwargs`` + ``enable_thinking``).
+    """
+    for key, value in source.items():
+        if (
+            isinstance(value, dict)
+            and isinstance(target.get(key), dict)
+        ):
+            _deep_merge_into(target[key], value)
+        else:
+            target[key] = value
+
+
 def _get(obj: Any, key: str) -> Any:
     """Get a value from dict or object attribute, returning None if absent."""
     if isinstance(obj, dict):
@@ -181,11 +198,13 @@ class OpenAICompatProvider(LLMProvider):
         api_base: str | None = None,
         default_model: str = "gpt-4o",
         extra_headers: dict[str, str] | None = None,
+        extra_body: dict[str, Any] | None = None,
         spec: ProviderSpec | None = None,
     ):
         super().__init__(api_key, api_base)
         self.default_model = default_model
         self.extra_headers = extra_headers or {}
+        self._config_extra_body: dict[str, Any] = dict(extra_body) if extra_body else {}
         self._spec = spec
 
         if api_key and spec and spec.env_key:
@@ -417,6 +436,13 @@ class OpenAICompatProvider(LLMProvider):
             kwargs.setdefault("extra_body", {}).update(
                 {"thinking": {"type": "enabled" if thinking_enabled else "disabled"}}
             )
+
+        # User-supplied extra_body from provider config (e.g. vLLM Qwen3
+        # chat_template_kwargs). Deep-merged last so users can override
+        # provider-specific defaults when they know what they're doing.
+        if self._config_extra_body:
+            merged = kwargs.setdefault("extra_body", {})
+            _deep_merge_into(merged, self._config_extra_body)
 
         if tools:
             kwargs["tools"] = tools

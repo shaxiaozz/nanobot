@@ -825,3 +825,83 @@ def test_kimi_k2_thinking_series_no_thinking_injection() -> None:
     """kimi-k2-thinking series models must NOT receive extra_body.thinking."""
     kw = _build_kwargs_for("moonshot", "kimi-k2-thinking", reasoning_effort="high")
     assert "extra_body" not in kw
+
+
+# ---------------------------------------------------------------------------
+# User-supplied extra_body passthrough (ProviderConfig.extra_body)
+# ---------------------------------------------------------------------------
+
+def _build_kwargs_with_extra_body(
+    provider_name: str,
+    model: str,
+    extra_body: dict,
+    reasoning_effort=None,
+):
+    spec = find_by_name(provider_name)
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
+        p = OpenAICompatProvider(
+            api_key="k",
+            default_model=model,
+            spec=spec,
+            extra_body=extra_body,
+        )
+    return p._build_kwargs(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=None, model=model, max_tokens=1024, temperature=0.7,
+        reasoning_effort=reasoning_effort, tool_choice=None,
+    )
+
+
+def test_extra_body_passthrough_vllm_qwen3_chat_template_kwargs() -> None:
+    """vLLM Qwen3 self-hosted: chat_template_kwargs is passed through verbatim."""
+    kw = _build_kwargs_with_extra_body(
+        "vllm",
+        "qwen3-5-122B",
+        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+    )
+    assert kw["extra_body"] == {"chat_template_kwargs": {"enable_thinking": False}}
+
+
+def test_extra_body_passthrough_custom_provider() -> None:
+    """Custom provider accepts arbitrary extra_body."""
+    kw = _build_kwargs_with_extra_body(
+        "custom",
+        "my-model",
+        extra_body={"foo": "bar", "nested": {"a": 1}},
+    )
+    assert kw["extra_body"] == {"foo": "bar", "nested": {"a": 1}}
+
+
+def test_extra_body_deep_merge_with_provider_injection() -> None:
+    """User extra_body deep-merges with provider-injected thinking params.
+
+    dashscope injects {"enable_thinking": False} on reasoning_effort=minimal;
+    user-supplied sibling keys must be preserved, not overwritten.
+    """
+    kw = _build_kwargs_with_extra_body(
+        "dashscope",
+        "qwen3-plus",
+        extra_body={"chat_template_kwargs": {"custom_flag": True}},
+        reasoning_effort="minimal",
+    )
+    # Provider-injected key preserved
+    assert kw["extra_body"]["enable_thinking"] is False
+    # User-supplied nested dict preserved
+    assert kw["extra_body"]["chat_template_kwargs"] == {"custom_flag": True}
+
+
+def test_extra_body_user_overrides_provider_on_key_clash() -> None:
+    """When user extra_body clashes on a key, user value wins (applied last)."""
+    kw = _build_kwargs_with_extra_body(
+        "dashscope",
+        "qwen3-plus",
+        extra_body={"enable_thinking": True},
+        reasoning_effort="minimal",  # would normally set enable_thinking=False
+    )
+    assert kw["extra_body"]["enable_thinking"] is True
+
+
+def test_extra_body_none_behaves_like_absent() -> None:
+    """extra_body=None must not touch kwargs."""
+    kw = _build_kwargs_with_extra_body("custom", "my-model", extra_body=None)
+    assert "extra_body" not in kw

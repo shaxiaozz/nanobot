@@ -387,6 +387,50 @@ vllm serve meta-llama/Llama-3.1-8B-Instruct --port 8000
 </details>
 
 <details>
+<summary><b>Passing extra body fields to OpenAI-compatible providers (<code>extraBody</code>)</b></summary>
+
+Every OpenAI-compatible provider config accepts an optional `extraBody` object that is
+deep-merged into the `chat.completions.create` request body on every call. Use it to pass
+provider- or model-specific knobs that nanobot does not have a first-class config field for.
+
+**Example — disable Qwen3 thinking on a self-hosted vLLM**
+
+vLLM / SGLang-hosted Qwen3 uses `chat_template_kwargs.enable_thinking` (different from the
+DashScope official API which uses `extra_body.enable_thinking` and is handled automatically
+by `reasoning_effort=minimal`):
+
+```json
+{
+  "providers": {
+    "vllm": {
+      "apiKey": null,
+      "apiBase": "http://your-host:8000/v1",
+      "extraBody": {
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        }
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "provider": "vllm",
+      "model": "qwen3-5-122B"
+    }
+  }
+}
+```
+
+Notes:
+- Keys you set here deep-merge with any provider-injected fields (e.g. dashscope thinking
+  flags). On a key clash, your value wins.
+- Nested dicts are merged recursively, so sibling keys are preserved.
+- Applies to any provider whose backend is `openai_compat` (vllm, custom, dashscope,
+  moonshot, openrouter, deepseek, gemini, …). Anthropic-backed providers ignore it.
+
+</details>
+
+<details>
 <summary><b>Adding a New Provider (Developer Guide)</b></summary>
 
 nanobot uses a **Provider Registry** (`nanobot/providers/registry.py`) as the single source of truth.
